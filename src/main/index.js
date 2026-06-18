@@ -58,7 +58,7 @@ try {
 // Defer native module loading to avoid interfering with Electron's module system
 let installGSIConfig, createGSIServer;
 let setApiKey, fetchAllPlayerStats, setFaceitKey, settings, applyZoom, mergeScrapedIntoPlayer;
-let initSteam, cleanupSteam, getRecentPlayers, getFriendsInGame, isSteamInitialized;
+let initSteam, cleanupSteam, isSteamInitialized, setSteamMap, getCoplayPlayers, getLobbyTeams;
 let gsiServer = null;
 let koffi, GetAsyncKeyState, SetWindowPos, SetWindowLongPtrW, GetWindowLongPtrW;
 let SetForegroundWindow, FindWindowW, GetWindowThreadProcessId, AttachThreadInput, GetCurrentThreadId, AllowSetForegroundWindow, GetCursorPos;
@@ -74,7 +74,7 @@ function loadNativeModules() {
   settings = require('./settings');
   ({ applyZoom } = require('./display-zoom'));
   ({ mergeScrapedIntoPlayer } = require('./player-merge'));
-  ({ initSteam, cleanupSteam, getRecentPlayers, getFriendsInGame, isInitialized: isSteamInitialized } = require('./steam-lifecycle'));
+  ({ initSteam, cleanupSteam, isInitialized: isSteamInitialized, setMap: setSteamMap, getCoplayPlayers, getLobbyTeams } = require('./steam-client'));
 
   // Load API keys from settings first, then .env as fallback
   const savedSettings = settings.load();
@@ -116,8 +116,7 @@ function loadNativeModules() {
   GetCursorPos = user32.func('int GetCursorPos(_Out_ uint8_t*)');
 }
 
-// Steam SDK lifecycle lives in steam-lifecycle.js — initSteam/cleanupSteam
-// and the accessors are imported in loadNativeModules().
+// Steam SDK lifecycle runs in a forked child (steam-worker.js, see steam-client.js).
 
 let win = null;
 let tray = null;
@@ -130,8 +129,6 @@ let gsiHintInterval = null;
 // reassigned) so async closures holding a reference keep seeing the live view.
 let scrapedIds = new Set();
 let scrapedData = {};
-let coplayCache = null;
-let coplayCacheTime = 0;
 let csstatsRetryInterval = null;
 let lastKnownRoundPhase = null;
 let csstatsInflight = false;
@@ -621,6 +618,7 @@ function startGSI() {
     }
     lastSteamIds = steamIds;
     lastMap = map;
+    setSteamMap(lastMap);
     if (teams) lastTeams = teams;
     if (liveStats) lastLiveStats = liveStats;
 
@@ -629,27 +627,11 @@ function startGSI() {
     runCsstatsScrape(steamIds, roundPhase);
 
     requestFetch(steamIds, map, lastTeams);
-  }, () => {
-    // Merge friends-in-CS2 (filtered to same map via rich presence) with
-    // coplay. Friends who are on a different map get excluded automatically.
-    const now = Date.now();
-    if (coplayCache && now - coplayCacheTime < 10000) return coplayCache;
-    // Only include friends when we have an active map — otherwise there's
-    // no data to validate against and every friend passes all checks.
-    const friends = (lastMap && getFriendsInGame) ? getFriendsInGame(lastMap) : [];
-    const coplay = getRecentPlayers ? getRecentPlayers(0) : [];
-    const seen = new Set(friends.map(f => f.steamId));
-    const merged = [...friends];
-    for (const p of coplay) {
-      if (!seen.has(p.steamId)) {
-        seen.add(p.steamId);
-        merged.push(p);
-      }
-    }
-    coplayCache = merged;
-    coplayCacheTime = now;
-    return merged;
   },
+  // Coplay getter — the merge of friends-in-CS2 + recent coplay now happens
+  // inside steam-worker.js; this is just a synchronous read of its last
+  // pushed snapshot (see steam-client.js).
+  getCoplayPlayers,
   // Reset callback — clear everything when leaving match or changing map
   (reason, newMap) => {
     matchEpoch++;
@@ -657,13 +639,12 @@ function startGSI() {
     cachedPlayers = null;
     lastSteamIds = [];
     lastMap = newMap || '';
+    setSteamMap(lastMap);
     lastTeams = {};
     lastLiveStats = {};
     lastFetchTime = 0;
     lastFetchedPlayerCount = 0;
     matchStartTime = null;
-    coplayCache = null;
-    coplayCacheTime = 0;
     clearScrapedState();
     lastKnownRoundPhase = null;
     // Clear the renderer
@@ -693,7 +674,8 @@ function startGSI() {
         win.webContents.send('live-stats-update', liveStats);
       }
     };
-  })());
+  })(),
+  getLobbyTeams);
 }
 
 // ─── Auto-disable fullscreen optimizations for CS2 ──────────
@@ -1031,6 +1013,7 @@ app.on('before-quit', (e) => {
   }
   console.log('[Main] Quitting — cleaning up everything...');
   cleanupSteam();
+  try { require('./steam-client').shutdown(); } catch {}
   try { const { shutdownScraper } = require('./scrape-client'); shutdownScraper(); } catch {}
   if (tray) { tray.destroy(); tray = null; }
   if (worker && worker.connected) { try { worker.kill(); } catch {} }
