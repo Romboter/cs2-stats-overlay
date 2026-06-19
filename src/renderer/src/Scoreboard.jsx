@@ -80,18 +80,32 @@ function PlayerRow({ player, isLocal, isSelected, showRecent }) {
   );
 }
 
-function ColumnHeaders({ showRecent, onToggleFilter, onOpenSettings, onReloadQueue }) {
-  const H = (col) => <div className="sb-resize-handle" data-resize-col={col} />;
+function SortableHdr({ col, label, className, sortState, onSort }) {
+  const active = sortState?.col === col;
+  const arrow = active ? (sortState.dir === 'desc' ? ' ▼' : ' ▲') : '';
+  return (
+    <div
+      className={`sb-col ${className} sb-hdr sb-hdr-sortable${active ? ' sb-hdr-active' : ''}`}
+      data-sort-col={col}
+      onClick={(e) => { e.stopPropagation(); onSort(col); }}
+      title={`Sort by ${label}`}
+    >
+      {label}{arrow}<div className="sb-resize-handle" data-resize-col={col} />
+    </div>
+  );
+}
+
+function ColumnHeaders({ showRecent, onToggleFilter, onOpenSettings, onReloadQueue, sortState, onSort }) {
   return (
     <div className="sb-row sb-row-header">
-      <div className="sb-col sb-col-name sb-hdr">PLAYER{H('name')}</div>
-      <div className="sb-col sb-col-rank sb-hdr">RANK{H('rank')}</div>
-      <div className="sb-col sb-col-stat sb-col-hltv sb-hdr">HLTV{H('hltv')}</div>
-      <div className="sb-col sb-col-stat sb-col-kd sb-hdr">K/D{H('kd')}</div>
-      <div className="sb-col sb-col-stat sb-col-win sb-hdr">WIN%{H('win')}</div>
-      <div className="sb-col sb-col-stat sb-col-adr sb-hdr">ADR{H('adr')}</div>
-      <div className="sb-col sb-col-stat sb-col-hs sb-hdr">HS%{H('hs')}</div>
-      <div className="sb-col sb-col-hours sb-hdr">HRS{H('hours')}</div>
+      <SortableHdr col="name" label="PLAYER" className="sb-col-name" sortState={sortState} onSort={onSort} />
+      <SortableHdr col="rank" label="RANK" className="sb-col-rank" sortState={sortState} onSort={onSort} />
+      <SortableHdr col="hltv" label="HLTV" className="sb-col-stat sb-col-hltv" sortState={sortState} onSort={onSort} />
+      <SortableHdr col="kd" label="K/D" className="sb-col-stat sb-col-kd" sortState={sortState} onSort={onSort} />
+      <SortableHdr col="win" label="WIN%" className="sb-col-stat sb-col-win" sortState={sortState} onSort={onSort} />
+      <SortableHdr col="adr" label="ADR" className="sb-col-stat sb-col-adr" sortState={sortState} onSort={onSort} />
+      <SortableHdr col="hs" label="HS%" className="sb-col-stat sb-col-hs" sortState={sortState} onSort={onSort} />
+      <SortableHdr col="hours" label="HRS" className="sb-col-hours" sortState={sortState} onSort={onSort} />
       <button className="sb-reload-btn" title="Reload queue (re-scan players)" onClick={(e) => { e.stopPropagation(); onReloadQueue?.(); }}>
         <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
           <polyline points="23 4 23 10 17 10"/>
@@ -147,11 +161,66 @@ function StatusBanner({ status }) {
 
 const DEFAULT_COL_WIDTHS = { name: 200, rank: 100, hltv: 58, kd: 48, win: 58, adr: 50, hs: 52, hours: 60 };
 
+function getSortValue(player, col, showRecent) {
+  const cs = player.csstats || {};
+  const lt = player.leetify || {};
+  const csr = player.csrep?.metrics || {};
+  const hasCsRecent = cs.recentKd != null || cs.recentRating != null;
+  switch (col) {
+    case 'name': return player.name?.toLowerCase() ?? null;
+    case 'rank': {
+      const premier = player.leetify?.premier || player.gcPremier || player.csstatsPeakPremier;
+      if (premier) return premier;
+      const faceitLvl = player.faceit?.level || player.csstats?.faceitLevel;
+      return faceitLvl ? faceitLvl * 1000 : null;
+    }
+    case 'hltv': {
+      const v = showRecent && cs.recentRating != null ? cs.recentRating : (cs.hltvRating ?? csr.hltvRating);
+      return v != null ? Number(v) : null;
+    }
+    case 'kd': {
+      const raw = showRecent && cs.recentKd != null
+        ? cs.recentKd
+        : (cs.kd ?? player.faceit?.stats?.kd ?? player.stats?.kd ?? csr.kd);
+      return raw != null ? parseFloat(raw) : null;
+    }
+    case 'win': {
+      const v = showRecent
+        ? (cs.recentWinRate ?? lt.recentWinRate ?? cs.winRate ?? lt.winRate ?? player.faceit?.stats?.winRate)
+        : (cs.winRate ?? lt.winRate ?? player.faceit?.stats?.winRate);
+      return v != null ? Number(v) : null;
+    }
+    case 'adr': {
+      const v = showRecent && hasCsRecent ? cs.recentAdr : (cs.adr ?? csr.adr);
+      return v != null ? Number(v) : null;
+    }
+    case 'hs': {
+      const v = showRecent && hasCsRecent ? cs.recentHs : (cs.hsPercent ?? csr.headAcc);
+      return v != null ? Number(v) : null;
+    }
+    case 'hours': {
+      if (!player.hours || player.hours === 'Private') return null;
+      const n = parseInt(player.hours, 10); // stored as "500h"
+      return isNaN(n) ? null : n;
+    }
+    default: return null;
+  }
+}
+
 export default function Scoreboard({ players, liveStats, settings, selectedPlayer, compact, onSelectPlayer, onHoverPlayer, serviceStatus, onOpenSettings, onReloadQueue }) {
   const tabView = settings?.tabView || {};
   const live = liveStats || {};
   const perf = live._performance;
   const [showRecent, setShowRecent] = useState(true);
+  const [sortState, setSortState] = useState({ col: null, dir: 'desc' });
+
+  function handleSort(col) {
+    setSortState(prev => {
+      if (prev.col !== col) return { col, dir: 'desc' };
+      if (prev.dir === 'desc') return { col, dir: 'asc' };
+      return { col: null, dir: 'desc' };
+    });
+  }
 
   const cw = { ...DEFAULT_COL_WIDTHS, ...(settings?.columnWidths || {}) };
   const boardStyle = {
@@ -166,6 +235,19 @@ export default function Scoreboard({ players, liveStats, settings, selectedPlaye
   };
 
   const avgRatingAll = useMemo(() => calcAvgRating(players), [players]);
+
+  const sortedPlayers = useMemo(() => {
+    if (!sortState.col) return players;
+    return [...players].sort((a, b) => {
+      const av = getSortValue(a, sortState.col, showRecent);
+      const bv = getSortValue(b, sortState.col, showRecent);
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1;
+      if (bv == null) return -1;
+      const cmp = typeof av === 'string' ? av.localeCompare(bv) : av - bv;
+      return sortState.dir === 'desc' ? -cmp : cmp;
+    });
+  }, [players, sortState, showRecent]);
 
   const renderRow = (p) => (
     <div key={p.steamId} onClick={() => onSelectPlayer?.(p)} onMouseEnter={() => onHoverPlayer?.(p)}>
@@ -205,13 +287,13 @@ export default function Scoreboard({ players, liveStats, settings, selectedPlaye
         </div>
 
         {/* Column headers */}
-        {!compact && <ColumnHeaders showRecent={showRecent} onToggleFilter={() => setShowRecent(r => !r)} onOpenSettings={onOpenSettings} onReloadQueue={onReloadQueue} />}
+        {!compact && <ColumnHeaders showRecent={showRecent} onToggleFilter={() => setShowRecent(r => !r)} onOpenSettings={onOpenSettings} onReloadQueue={onReloadQueue} sortState={sortState} onSort={handleSort} />}
 
         <SectionHeader label="PLAYERS" color="green" count={players.length} avgRating={avgRatingAll} />
         <div className="sb-rows">
           {players.length === 0
             ? <div className="sb-empty">Waiting for player data...</div>
-            : players.map(renderRow)
+            : sortedPlayers.map(renderRow)
           }
         </div>
       </div>

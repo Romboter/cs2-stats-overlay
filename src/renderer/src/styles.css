@@ -282,6 +282,9 @@ html, body {
 .sb-row-header .sb-col-rank { justify-content: flex-end; text-align: right; }
 .sb-row-header .sb-col-stat { text-align: right; }
 .sb-row-header .sb-col-hours { text-align: right; }
+.sb-hdr-sortable { cursor: pointer; user-select: none; }
+.sb-row-header .sb-hdr-sortable:hover { color: #8ba3c4; }
+.sb-row-header .sb-hdr-active { color: #a8c4e8; }
 
 /* ── Filter Toggle ── */
 .sb-filter-btn {
