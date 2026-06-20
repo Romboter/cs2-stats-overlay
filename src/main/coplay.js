@@ -1,5 +1,6 @@
 const path = require("path");
 const koffi = require("koffi");
+const { logRaw } = require("./raw-data-logger");
 
 // In packaged builds, __dirname points inside app.asar, but native DLLs must be
 // loaded from app.asar.unpacked. Swap the path segment when we detect we're in asar.
@@ -84,6 +85,7 @@ function getRecentPlayers(withinSeconds = 300) {
   // whenever any coplay entry overlapped with an existing ID.
   recent = recent.slice(0, 15);
   if (count > 0) console.log(`[Coplay] ${recent.length} CS2 coplay (${players.length} total CS2, ${count} all games)`);
+  logRaw('coplay', { fn: 'getRecentPlayers', withinSeconds, totalCount: count, allCs2Players: players, recentPlayers: recent });
   return recent;
 }
 
@@ -192,6 +194,7 @@ function getFriendsInGame(currentMap) {
   }
 
   if (inCS2 > 0) console.log(`[Coplay] ${passed}/${inCS2} friends passed checks (map=${currentMap || '?'}) (of ${count} total)`);
+  logRaw('coplay', { fn: 'getFriendsInGame', currentMap, localServerKey, localGroup, totalFriends: count, inCs2: inCS2, passed, players });
   return players;
 }
 
@@ -255,6 +258,7 @@ function getLobbyTeams() {
 
         if (members.length > 0) {
           console.log(`[Lobby] Members:`, members.map(m => `${m.steamId} team=${m.team} slot=${m.slot}`).join(', '));
+          logRaw('coplay', { fn: 'getLobbyTeams', lobbyId: lobbyId.toString(), members });
         }
         return { lobbyId: lobbyId.toString(), members };
       }
