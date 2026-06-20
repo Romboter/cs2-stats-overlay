@@ -537,6 +537,11 @@ export default function App() {
         // --- Hover: hit-test player rows ---
         // Disable click-through while the cursor is over interactive areas —
         // the detail panel needs it for scroll, the scoreboard for sort/filter clicks.
+        // Skip entirely while Settings is open: settingsPinned (main process) already
+        // forces the window fully interactive, and .sb-board/.dp-v don't exist in the
+        // DOM then, so this would always see "not interactive" and flip click-through
+        // back on, fighting the pin.
+        if (showSettingsRef.current) return;
         const overPanel = hitTest('.dp-v', cx, cy);
         const overBoard = hitTest('.sb-board', cx, cy);
         const overInteractive = overPanel || overBoard;
