@@ -25,6 +25,7 @@ const {
   topUpFromCoplay, buildLiveStatsBlock, applyTeamsFrom, sameIdSet,
 } = require('./gsi-roster');
 const { buyAdviceFor } = require('./gsi-buy-advisor');
+const matchDetector = require('./match-detector');
 
 // ── Protocol-level constants ──────────────────────────────────
 const GSI_PORT = 3000;
@@ -45,6 +46,10 @@ const READY_DEBOUNCE_SLOW_MS = 1000;
 
 // Throttle live-stats emissions so the renderer doesn't thrash at 10Hz.
 const LIVE_EMIT_MIN_MS = 500;
+
+// How often to pull a fresh coplay snapshot for exact-9 roster clustering
+// (match-detector.js) while a competitive match candidate is active.
+const COPLAY_POLL_MS = 5000;
 
 // Diagnostic log throttles
 const DEBUG_EXTRACT_LOG_MS = 10000;
@@ -108,7 +113,7 @@ function retagCoplayTeams({ collectedIds, playerTeams, localTeam, localId, getCo
   return false;
 }
 
-function createGSIServer(onPlayersReady, getCoplayPlayers, onReset, onLiveStats) {
+function createGSIServer(onPlayersReady, getCoplayPlayers, onReset, onLiveStats, getRecentPlayersRaw, onMatchSaved) {
   // ── Per-match state ─────────────────────────────────────────
   let currentMap = null;
   let collectedIds = new Set();
@@ -136,6 +141,14 @@ function createGSIServer(onPlayersReady, getCoplayPlayers, onReset, onLiveStats)
 
   let fetchTimeout = null;
 
+  // Competitive-only roster/team detection (match-detector.js). null outside
+  // competitive matches — gsi-server.js falls back to the allplayers-based
+  // collectedIds/playerTeams logic above in that case.
+  let matchCandidate = null;
+  let lastCoplayPollMs = 0;
+  let rosterFinalizedSignaled = false;
+  let lastConfidenceLog = null;
+
   // Single reset entry — map change, menu exit, manual reset, same-map
   // rematch all funnel through here so per-match state can never leak
   // from a previous match into a new one.
@@ -150,6 +163,10 @@ function createGSIServer(onPlayersReady, getCoplayPlayers, onReset, onLiveStats)
     sawGameover = false;
     lastKnownLocalId = null;
     if (fetchTimeout) { clearTimeout(fetchTimeout); fetchTimeout = null; }
+    matchCandidate = null;
+    lastCoplayPollMs = 0;
+    rosterFinalizedSignaled = false;
+    lastConfidenceLog = null;
     totalDamage = 0;
     lastRoundDmg = 0;
     roundsPlayed = 0;
@@ -346,6 +363,50 @@ function createGSIServer(onPlayersReady, getCoplayPlayers, onReset, onLiveStats)
     logTopLevelKeysThrottled(data);
 
     if (data.provider?.steamid) lastKnownLocalId = data.provider.steamid;
+
+    let matchRosterJustFinalized = false;
+    if (!matchCandidate && matchDetector.isCompetitiveMatchGsi(data)) {
+      matchCandidate = matchDetector.createMatchCandidate({
+        mySteamId64: data.provider.steamid,
+        map: data.map?.name ?? null,
+        mode: data.map?.mode ?? null,
+        detectedAtIso: new Date().toISOString(),
+      });
+      console.log(`[MatchDetector] Candidate created for ${matchCandidate.map} (${matchCandidate.mode})`);
+    }
+
+    if (matchCandidate) {
+      const tsIso = new Date().toISOString();
+      const justClosed = matchDetector.applyGsiTick(matchCandidate, {
+        player: data.player, previously: data.previously, map: data.map, round: data.round,
+      }, tsIso);
+
+      const now = Date.now();
+      if (!matchCandidate.lifecycle.closed && getRecentPlayersRaw && (now - lastCoplayPollMs >= COPLAY_POLL_MS)) {
+        lastCoplayPollMs = now;
+        try {
+          const recentPlayers = getRecentPlayersRaw() || [];
+          matchDetector.onRecentPlayersSnapshot(matchCandidate, recentPlayers, tsIso);
+        } catch (err) {
+          console.log('[MatchDetector] Coplay snapshot failed:', err.message);
+        }
+      }
+
+      if (matchCandidate.rosterFinalized && !rosterFinalizedSignaled) {
+        rosterFinalizedSignaled = true;
+        matchRosterJustFinalized = true;
+      }
+
+      if (matchCandidate.confidence !== lastConfidenceLog) {
+        lastConfidenceLog = matchCandidate.confidence;
+        console.log(`[MatchDetector] confidence=${matchCandidate.confidence} roster=${matchCandidate.roster.length} local=${matchCandidate.localTeamSteamIds.size} opp=${matchCandidate.opponentSteamIds.size}`);
+      }
+
+      if (justClosed && onMatchSaved) {
+        try { onMatchSaved(matchDetector.buildSavedMatchRecord(matchCandidate)); }
+        catch (err) { console.log('[MatchDetector] Save failed:', err.message); }
+      }
+    }
 
     const liveStats = {};
     const { changed: rosterChanged, hasUsableAllplayers } = updateRoster(data, liveStats);
