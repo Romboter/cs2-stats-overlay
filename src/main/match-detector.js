@@ -88,11 +88,6 @@ function handleGsiLifecycle(match, { map, round }, tsIso) {
   return false;
 }
 
-// Forward-declaration for Task 3's recomputeOpponentSet. This allows Task 2's
-// functions to call it via hoisting (same-module function declarations are hoisted).
-// The actual implementation is added in Task 3.
-function recomputeOpponentSet(match) {}
-
 // Steam's coplayTime is a per-player "last played CS2 together" timestamp.
 // All 9 players from the same match share an identical value, so grouping a
 // single getRecentPlayers() snapshot by coplayTime recovers the full roster
