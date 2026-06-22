@@ -29,28 +29,7 @@ function fmtRating(r) {
 
 function PlayerRow({ player, isLocal, isSelected, showRecent }) {
   const displayName = isLocal ? 'You' : (player.name || 'Unknown');
-  const premier = player.leetify?.premier || player.gcPremier || player.csstatsPeakPremier;
-  const faceitLvl = player.faceit?.level || player.csstats?.faceitLevel;
-  const cs = player.csstats || {};
-  const lt = player.leetify || {};
-  // csrep.gg metrics are the last-resort fallback when csstats has
-  // nothing (private profile / untracked account). csrep still gives
-  // us kd/adr/hltv/hs for these players — better than a blank row.
-  const csr = player.csrep?.metrics || {};
-  const hasCsRecent = cs.recentKd != null || cs.recentRating != null;
-
-  const kd = showRecent && cs.recentKd != null
-    ? cs.recentKd
-    : (cs.kd ?? player.faceit?.stats?.kd ?? player.stats?.kd ?? csr.kd);
-  const hltv = showRecent && cs.recentRating != null
-    ? cs.recentRating
-    : (cs.hltvRating ?? csr.hltvRating);
-  const wr = showRecent
-    ? (cs.recentWinRate ?? lt.recentWinRate ?? cs.winRate ?? lt.winRate ?? player.faceit?.stats?.winRate)
-    : (cs.winRate ?? lt.winRate ?? player.faceit?.stats?.winRate);
-  const hs = showRecent && hasCsRecent ? cs.recentHs : (cs.hsPercent ?? csr.headAcc);
-  const adr = showRecent && hasCsRecent ? cs.recentAdr : (cs.adr ?? csr.adr);
-  const hours = player.hours && player.hours !== 'Private' ? player.hours : null;
+  const { premier, faceitLvl, kd, hltv, wr, hs, adr, hours } = getStatValues(player, showRecent);
 
   return (
     <div
@@ -161,46 +140,45 @@ function StatusBanner({ status }) {
 
 const DEFAULT_COL_WIDTHS = { name: 200, rank: 100, hltv: 58, kd: 48, win: 58, adr: 50, hs: 52, hours: 60 };
 
-function getSortValue(player, col, showRecent) {
+function getStatValues(player, showRecent) {
   const cs = player.csstats || {};
   const lt = player.leetify || {};
+  // csrep.gg metrics are the last-resort fallback when csstats has
+  // nothing (private profile / untracked account). csrep still gives
+  // us kd/adr/hltv/hs for these players — better than a blank row.
   const csr = player.csrep?.metrics || {};
   const hasCsRecent = cs.recentKd != null || cs.recentRating != null;
+
+  const premier = player.leetify?.premier || player.gcPremier || player.csstatsPeakPremier;
+  const faceitLvl = player.faceit?.level || player.csstats?.faceitLevel;
+  const kd = showRecent && cs.recentKd != null
+    ? cs.recentKd
+    : (cs.kd ?? player.faceit?.stats?.kd ?? player.stats?.kd ?? csr.kd);
+  const hltv = showRecent && cs.recentRating != null
+    ? cs.recentRating
+    : (cs.hltvRating ?? csr.hltvRating);
+  const wr = showRecent
+    ? (cs.recentWinRate ?? lt.recentWinRate ?? cs.winRate ?? lt.winRate ?? player.faceit?.stats?.winRate)
+    : (cs.winRate ?? lt.winRate ?? player.faceit?.stats?.winRate);
+  const hs = showRecent && hasCsRecent ? cs.recentHs : (cs.hsPercent ?? csr.headAcc);
+  const adr = showRecent && hasCsRecent ? cs.recentAdr : (cs.adr ?? csr.adr);
+  const hours = player.hours && player.hours !== 'Private' ? player.hours : null;
+  return { premier, faceitLvl, kd, hltv, wr, hs, adr, hours };
+}
+
+function getSortValue(player, col, showRecent) {
+  const v = getStatValues(player, showRecent);
   switch (col) {
     case 'name': return player.name?.toLowerCase() ?? null;
-    case 'rank': {
-      const premier = player.leetify?.premier || player.gcPremier || player.csstatsPeakPremier;
-      if (premier) return premier;
-      const faceitLvl = player.faceit?.level || player.csstats?.faceitLevel;
-      return faceitLvl ? faceitLvl * 1000 : null;
-    }
-    case 'hltv': {
-      const v = showRecent && cs.recentRating != null ? cs.recentRating : (cs.hltvRating ?? csr.hltvRating);
-      return v != null ? Number(v) : null;
-    }
-    case 'kd': {
-      const raw = showRecent && cs.recentKd != null
-        ? cs.recentKd
-        : (cs.kd ?? player.faceit?.stats?.kd ?? player.stats?.kd ?? csr.kd);
-      return raw != null ? parseFloat(raw) : null;
-    }
-    case 'win': {
-      const v = showRecent
-        ? (cs.recentWinRate ?? lt.recentWinRate ?? cs.winRate ?? lt.winRate ?? player.faceit?.stats?.winRate)
-        : (cs.winRate ?? lt.winRate ?? player.faceit?.stats?.winRate);
-      return v != null ? Number(v) : null;
-    }
-    case 'adr': {
-      const v = showRecent && hasCsRecent ? cs.recentAdr : (cs.adr ?? csr.adr);
-      return v != null ? Number(v) : null;
-    }
-    case 'hs': {
-      const v = showRecent && hasCsRecent ? cs.recentHs : (cs.hsPercent ?? csr.headAcc);
-      return v != null ? Number(v) : null;
-    }
+    case 'rank': return v.premier || (v.faceitLvl ? v.faceitLvl * 1000 : null);
+    case 'hltv': return v.hltv != null ? Number(v.hltv) : null;
+    case 'kd': return v.kd != null ? parseFloat(v.kd) : null;
+    case 'win': return v.wr != null ? Number(v.wr) : null;
+    case 'adr': return v.adr != null ? Number(v.adr) : null;
+    case 'hs': return v.hs != null ? Number(v.hs) : null;
     case 'hours': {
-      if (!player.hours || player.hours === 'Private') return null;
-      const n = parseInt(player.hours, 10); // stored as "500h"
+      if (!v.hours) return null;
+      const n = parseInt(v.hours, 10); // stored as "500h"
       return isNaN(n) ? null : n;
     }
     default: return null;
