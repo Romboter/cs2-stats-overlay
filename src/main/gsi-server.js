@@ -176,14 +176,32 @@ function createGSIServer(onPlayersReady, getCoplayPlayers, onReset, onLiveStats,
     if (onReset) onReset(reason, newMap);
   }
 
+  // doReset() (above) wipes matchCandidate unconditionally, but if the
+  // outgoing match reached gameover and was never closed (CS2 often
+  // transitions straight to a new map/menu without ever sending a tick
+  // with map:null), the close→save transition would never fire. Call this
+  // immediately before any doReset() that might discard a not-yet-closed,
+  // already-gameover candidate, so the save still happens.
+  function finalizeAndSaveMatchCandidateIfNeeded(tsIso) {
+    if (!matchCandidate || matchCandidate.lifecycle.closed) return;
+    if (!matchCandidate.lifecycle.gameover) return;
+    const justClosed = matchDetector.applyGsiTick(matchCandidate, { map: null, round: null }, tsIso);
+    if (justClosed && onMatchSaved) {
+      try { onMatchSaved(matchDetector.buildSavedMatchRecord(matchCandidate)); }
+      catch (err) { console.log('[MatchDetector] Save failed:', err.message); }
+    }
+  }
+
   // Returns 'stop' when the tick should not be processed further (menu
   // transition with no match data yet), 'continue' otherwise.
   function handleTransitions(map, phase, gameMode) {
     if (map && map !== currentMap) {
+      finalizeAndSaveMatchCandidateIfNeeded(new Date().toISOString());
       doReset('map-change', map);
       console.log(`\n[GSI] New map: ${map} | mode: ${gameMode} | max players: ${MAX_PLAYERS}`);
     }
     if (!map && currentMap) {
+      finalizeAndSaveMatchCandidateIfNeeded(new Date().toISOString());
       doReset('menu', null);
       return 'stop';
     }
@@ -197,6 +215,7 @@ function createGSIServer(onPlayersReady, getCoplayPlayers, onReset, onLiveStats,
       sawGameover = true;
     } else if (sawGameover && (phase === 'warmup' || phase === 'live') && phase !== lastPhase) {
       console.log(`[GSI] Same-map new match detected (phase ${lastPhase} → ${phase}) — resetting roster`);
+      finalizeAndSaveMatchCandidateIfNeeded(new Date().toISOString());
       doReset('new-match-same-map', map);
       currentMap = map; // doReset nulled it since newMap=map
     }

@@ -45,7 +45,7 @@ function initCoplay() {
 }
 
 // Get recent CS2 coplay friends (strangers), filtered to a recent time window
-function getRecentPlayers(withinSeconds = 300) {
+function getRecentPlayers(withinSeconds = 300, limit = 15) {
   if (!iface) return [];
 
   const now = Math.floor(Date.now() / 1000);
@@ -78,11 +78,14 @@ function getRecentPlayers(withinSeconds = 300) {
     recent = players.filter(p => (now - p.coplayTime) <= withinSeconds);
   }
 
-  // Return up to 15 — the GSI server caps at maxPlayers and dedupes
-  // against the local player and any partial allplayers payload, so we
-  // want headroom. A hard cap of 9 here caused matches to stick at 9
-  // whenever any coplay entry overlapped with an existing ID.
-  recent = recent.slice(0, 15);
+  // Cap the list — the GSI server caps at maxPlayers and dedupes against the
+  // local player and any partial allplayers payload, so we want headroom. A
+  // hard cap of 9 here caused matches to stick at 9 whenever any coplay
+  // entry overlapped with an existing ID. limit=0 disables the cap entirely
+  // — match-detector.js needs the full list to reliably find the exact-9
+  // coplayTime cluster, since the match's own 9 players aren't guaranteed
+  // to be the 15 most-recent coplay entries overall.
+  if (limit > 0) recent = recent.slice(0, limit);
   if (count > 0) console.log(`[Coplay] ${recent.length} CS2 coplay (${players.length} total CS2, ${count} all games)`);
   return recent;
 }

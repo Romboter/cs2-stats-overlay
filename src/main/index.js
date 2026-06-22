@@ -712,7 +712,7 @@ function startGSI() {
   // Raw (un-merged, un-cached) coplay snapshot — match-detector.js needs the
   // real per-player coplayTime values for exact-9 clustering, which the
   // friends-merged 10s-cached getCoplayPlayers() above doesn't reliably keep.
-  () => (getRecentPlayers ? (getRecentPlayers(0) || []) : []),
+  () => (getRecentPlayers ? (getRecentPlayers(0, 0) || []) : []),
   saveMatchRecord);
 }
 
