@@ -172,6 +172,107 @@ function onRecentPlayersSnapshot(match, players, sourceIso) {
   }
 }
 
+function applyGsiPlayer(match, gsiPlayer, tsIso) {
+  if (!gsiPlayer?.steamid) return;
+  const steamId64 = gsiPlayer.steamid;
+  match.gsiSeenSteamIds.add(steamId64);
+
+  let existing = match.gsiSeenPlayers.get(steamId64);
+  if (!existing) {
+    existing = { steamId64, name: null, firstSeenAtIso: tsIso ?? null, lastSeenAtIso: tsIso ?? null };
+    match.gsiSeenPlayers.set(steamId64, existing);
+  }
+  if (gsiPlayer.name) existing.name = gsiPlayer.name;
+  existing.lastSeenAtIso = tsIso ?? null;
+
+  applyTeamClassificationFromGsi(match, steamId64);
+}
+
+function applyTeamClassificationFromGsi(match, steamId64) {
+  if (steamId64 === match.mySteamId64) {
+    match.localTeamSteamIds.add(steamId64);
+    recomputeOpponentSet(match);
+    return;
+  }
+  if (!match.rosterFinalized) return;
+
+  const isRosterPlayer = match.roster.some(p => p.steamId64 === steamId64);
+  if (isRosterPlayer) match.localTeamSteamIds.add(steamId64);
+
+  recomputeOpponentSet(match);
+}
+
+function recomputeOpponentSet(match) {
+  if (!match.rosterFinalized) return;
+  const rosterIds = match.roster.map(p => p.steamId64);
+  match.opponentSteamIds = new Set(rosterIds.filter(id => !match.localTeamSteamIds.has(id)));
+  if (isTeamClassificationComplete(match) && match.confidence !== 'ended') {
+    match.confidence = 'team_classified';
+  }
+}
+
+function isTeamClassificationComplete(match) {
+  return match.rosterFinalized && match.localTeamSteamIds.size === 5 && match.opponentSteamIds.size === 5;
+}
+
+function getTeamRelation(match, steamId64) {
+  if (!match) return null;
+  if (steamId64 === match.mySteamId64) return 'self';
+  if (match.localTeamSteamIds.has(steamId64)) return 'teammate';
+  if (match.opponentSteamIds.has(steamId64)) return 'opponent';
+  return null;
+}
+
+// Top-level combinator gsi-server.js calls once per tick. Returns true the
+// single time the match transitions to closed — gsi-server.js uses that to
+// fire the onMatchSaved callback exactly once.
+function applyGsiTick(match, { player, previously, map, round }, tsIso) {
+  if (!match || match.lifecycle.closed) return false;
+  const justClosed = handleGsiLifecycle(match, { map, round }, tsIso);
+  if (player) applyGsiPlayer(match, player, tsIso);
+  if (previously?.player) applyGsiPlayer(match, previously.player, tsIso);
+  return justClosed;
+}
+
+function buildSavedMatchRecord(match) {
+  const players = match.roster.map(p => ({
+    steamId64: p.steamId64,
+    name: p.name,
+    teamRelation: getTeamRelation(match, p.steamId64) || 'unknown',
+    sources: p.sources,
+  }));
+  players.unshift({
+    steamId64: match.mySteamId64,
+    name: match.gsiSeenPlayers.get(match.mySteamId64)?.name || null,
+    teamRelation: 'self',
+    sources: ['gsi'],
+  });
+
+  return {
+    id: match.id,
+    appid: match.appid,
+    mode: match.mode,
+    map: match.map,
+    mySteamId64: match.mySteamId64,
+    detectedAtIso: match.detectedAtIso,
+    rosterDetectedAtIso: match.evidence.exactNineFirstSeenIso,
+    gameoverAtIso: match.lifecycle.gameoverAtIso,
+    closedAtIso: match.lifecycle.closedAtIso,
+    rosterSource: match.rosterSource,
+    exactNineCoplayTime: match.evidence.exactNineCoplayTime,
+    finalScore: match.finalScore,
+    players,
+    evidence: {
+      recentPlayersExactClusterFound: match.evidence.recentPlayersChecked,
+      exactNineFirstSeenIso: match.evidence.exactNineFirstSeenIso,
+      exactNineLastSeenIso: match.evidence.exactNineLastSeenIso,
+      gsiGameoverSeen: match.evidence.gsiGameoverSeen,
+      gsiLocalTeamClassified: isTeamClassificationComplete(match),
+    },
+    confidence: match.confidence,
+  };
+}
+
 module.exports = {
   isCompetitiveMatchGsi,
   createMatchCandidate,
@@ -181,4 +282,11 @@ module.exports = {
   finalizeRosterFromRecentPlayers,
   shouldKeepCachedRoster,
   onRecentPlayersSnapshot,
+  applyGsiPlayer,
+  applyTeamClassificationFromGsi,
+  recomputeOpponentSet,
+  isTeamClassificationComplete,
+  getTeamRelation,
+  applyGsiTick,
+  buildSavedMatchRecord,
 };
