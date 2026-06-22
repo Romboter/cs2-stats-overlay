@@ -314,6 +314,19 @@ function createGSIServer(onPlayersReady, getCoplayPlayers, onReset, onLiveStats,
     }
   }
 
+  // Layers match-detector's coplay-derived team relation (stable across
+  // half-time side swaps) over the allplayers/friend-heuristic playerTeams
+  // map. Only kicks in once match-detector has actually classified someone —
+  // everyone else still comes from the existing fallback path.
+  function effectiveTeams() {
+    if (!matchCandidate || !localPlayerTeam) return playerTeams;
+    const merged = { ...playerTeams };
+    const enemyTeam = localPlayerTeam === 'T' ? 'CT' : 'T';
+    for (const id of matchCandidate.localTeamSteamIds) merged[id] = localPlayerTeam;
+    for (const id of matchCandidate.opponentSteamIds) merged[id] = enemyTeam;
+    return merged;
+  }
+
   function stampMatchMeta(liveStats, data) {
     if (data.map) {
       liveStats._teamScores = {
@@ -323,7 +336,7 @@ function createGSIServer(onPlayersReady, getCoplayPlayers, onReset, onLiveStats,
       liveStats._round = data.map.round ?? 0;
     }
     liveStats._roundPhase = data.round?.phase || null;
-    liveStats._teams = { ...playerTeams };
+    liveStats._teams = effectiveTeams();
   }
 
   // Log team composition only when it changes so we don't spam the log on
@@ -489,20 +502,30 @@ function createGSIServer(onPlayersReady, getCoplayPlayers, onReset, onLiveStats,
     // Debounced fan-out to the fetch pipeline. Fast path once we have most
     // of the roster so stats start loading; slow path otherwise so we can
     // still pick up the last straggler.
-    if (rosterChanged && collectedIds.size >= 1) {
+    // Prefer match-detector's cached roster once finalized — in competitive
+    // matches collectedIds (built from allplayers) tops out at ~5 players
+    // (self + teammates only; CS2 never sends opponents in allplayers for
+    // comp), so without this the other 5 never get a stat fetch.
+    let idsForFetch = collectedIds;
+    if (matchCandidate?.rosterFinalized) {
+      idsForFetch = new Set(matchCandidate.roster.map(p => p.steamId64));
+      idsForFetch.add(matchCandidate.mySteamId64);
+    }
+
+    if ((rosterChanged || matchRosterJustFinalized) && idsForFetch.size >= 1) {
       if (fetchTimeout) clearTimeout(fetchTimeout);
-      const delay = collectedIds.size >= READY_THRESHOLD
+      const delay = idsForFetch.size >= READY_THRESHOLD
         ? READY_DEBOUNCE_FAST_MS
         : READY_DEBOUNCE_SLOW_MS;
       fetchTimeout = setTimeout(() => {
         // Hard-cap — demo parsing / top-up can push us past MAX_PLAYERS.
-        const capped = Array.from(collectedIds).slice(0, MAX_PLAYERS);
+        const capped = Array.from(idsForFetch).slice(0, MAX_PLAYERS);
         onPlayersReady({
           steamIds: capped,
           map: currentMap,
           phase,
           roundPhase: data.round?.phase || null,
-          teams: { ...playerTeams },
+          teams: effectiveTeams(),
           localPlayerTeam,
           liveStats: { ...liveStats },
         });
