@@ -44,7 +44,7 @@ function CsstatsStatusButton() {
   return <button className={cls} onClick={check}>{label}</button>;
 }
 
-function KeyRow({ label, fieldKey, status, required, placeholder, helpUrl, helpText, onSaved, onCleared }) {
+function KeyRow({ label, fieldKey, status, required, placeholder, helpUrl, helpText = 'Get key', onSaved, onCleared }) {
   const [editing, setEditing] = useState(!status?.set);
   const [draft, setDraft] = useState('');
   const [busy, setBusy] = useState(false);
@@ -66,7 +66,7 @@ function KeyRow({ label, fieldKey, status, required, placeholder, helpUrl, helpT
     setBusy(true);
     setMsg({ type: 'ok', text: 'Validating...' });
     try {
-      const payload = { steam: '', faceit: '' };
+      const payload = { steam: '', faceit: '', leetify: '' };
       payload[fieldKey] = value;
       const v = await window.cs2stats?.validateApiKeys?.(payload);
       const result = v?.[fieldKey];
@@ -297,13 +297,32 @@ export default function Settings({ settings, onSave, onClose }) {
             required
             placeholder="paste Steam Web API key"
             helpUrl="https://steamcommunity.com/dev/apikey"
-            helpText="Get key"
+            onSaved={refreshKeyStatus}
+            onCleared={refreshKeyStatus}
+          />
+          <KeyRow
+            label="FACEIT Open Data"
+            fieldKey="faceit"
+            status={keyStatus?.faceit}
+            placeholder="paste FACEIT API key"
+            helpUrl="https://developers.faceit.com"
+            onSaved={refreshKeyStatus}
+            onCleared={refreshKeyStatus}
+          />
+          <KeyRow
+            label="Leetify Developer"
+            fieldKey="leetify"
+            status={keyStatus?.leetify}
+            placeholder="paste Leetify API key"
+            helpUrl="https://leetify.com/app/developer"
             onSaved={refreshKeyStatus}
             onCleared={refreshKeyStatus}
           />
           <div className="settings-key-help">
             Leetify, FACEIT (level + elo), csstats.gg, and csrep.gg all work keylessly.
-            Only Steam Web needs a key — for names, avatars, VAC/game-ban status.
+            Steam Web needs a key for names, avatars, VAC/game-ban status. FACEIT and
+            Leetify keys are optional too — they just raise rate limits / unlock
+            authenticated data on those services.
           </div>
         </div>
 

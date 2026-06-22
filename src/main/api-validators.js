@@ -54,6 +54,19 @@ async function validateFaceitKey(key) {
   return { ok: false, reason: `FACEIT returned ${r.status}` };
 }
 
+// Leetify: dedicated key-validation endpoint. The main profile API works
+// keylessly too, so it can't tell a wrong key from no key — this one can.
+async function validateLeetifyKey(key) {
+  if (!key) return { ok: false, reason: 'Leetify key missing (optional)', optional: true };
+  const r = await httpGet('https://api-public.cs-prod.leetify.com/api-key/validate', {
+    _leetify_key: key,
+  });
+  if (r.status === 200) return { ok: true };
+  if (r.status === 401 || r.status === 403) return { ok: false, reason: 'Invalid Leetify API key' };
+  if (r.status === 0) return { ok: false, reason: 'Network error reaching Leetify' };
+  return { ok: false, reason: `Leetify returned ${r.status}` };
+}
+
 // Validate whatever keys were provided. Keys set to empty strings are
 // reported as "missing (optional)" so the UI can distinguish "not set" from
 // "set but wrong".
@@ -61,7 +74,8 @@ async function validateApiKeys(keys) {
   return {
     steam: await validateSteamKey(String(keys?.steam || '').trim()),
     faceit: await validateFaceitKey(String(keys?.faceit || '').trim()),
+    leetify: await validateLeetifyKey(String(keys?.leetify || '').trim()),
   };
 }
 
-module.exports = { validateApiKeys, validateSteamKey, validateFaceitKey };
+module.exports = { validateApiKeys, validateSteamKey, validateFaceitKey, validateLeetifyKey };
