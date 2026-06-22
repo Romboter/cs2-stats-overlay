@@ -601,6 +601,21 @@ function requestFetch(steamIds, map, teams) {
 }
 
 // ─── GSI data pipeline ──────────────────────────────────────
+
+// Persist a completed competitive match (see match-detector.js) as a JSON
+// file so roster/team detection results survive past the live session.
+function saveMatchRecord(record) {
+  try {
+    const matchesDir = path.join(app.getPath('userData'), 'matches');
+    fs.mkdirSync(matchesDir, { recursive: true });
+    const file = path.join(matchesDir, `${record.id}.json`);
+    fs.writeFileSync(file, JSON.stringify(record, null, 2));
+    console.log(`[MatchDetector] Saved match record: ${file} (confidence=${record.confidence})`);
+  } catch (err) {
+    console.log('[MatchDetector] Failed to save match record:', err.message);
+  }
+}
+
 function startGSI() {
   installGSIConfig();
   // Strips any legacy autoexec we planted in past installs. No bind needed —
@@ -693,7 +708,12 @@ function startGSI() {
         win.webContents.send('live-stats-update', liveStats);
       }
     };
-  })());
+  })(),
+  // Raw (un-merged, un-cached) coplay snapshot — match-detector.js needs the
+  // real per-player coplayTime values for exact-9 clustering, which the
+  // friends-merged 10s-cached getCoplayPlayers() above doesn't reliably keep.
+  () => (getRecentPlayers ? (getRecentPlayers(0) || []) : []),
+  saveMatchRecord);
 }
 
 // ─── Auto-disable fullscreen optimizations for CS2 ──────────
