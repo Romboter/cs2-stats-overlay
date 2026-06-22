@@ -176,6 +176,15 @@ function createGSIServer(onPlayersReady, getCoplayPlayers, onReset, onLiveStats,
     if (onReset) onReset(reason, newMap);
   }
 
+  // Shared by finalizeAndSaveMatchCandidateIfNeeded() and processTick()'s
+  // normal tick path — both can produce a justClosed=true from
+  // applyGsiTick(); this is the one place that turns that into a save.
+  function saveIfClosed(justClosed) {
+    if (!justClosed || !onMatchSaved) return;
+    try { onMatchSaved(matchDetector.buildSavedMatchRecord(matchCandidate)); }
+    catch (err) { console.log('[MatchDetector] Save failed:', err.message); }
+  }
+
   // doReset() (above) wipes matchCandidate unconditionally, but if the
   // outgoing match reached gameover and was never closed (CS2 often
   // transitions straight to a new map/menu without ever sending a tick
@@ -186,10 +195,7 @@ function createGSIServer(onPlayersReady, getCoplayPlayers, onReset, onLiveStats,
     if (!matchCandidate || matchCandidate.lifecycle.closed) return;
     if (!matchCandidate.lifecycle.gameover) return;
     const justClosed = matchDetector.applyGsiTick(matchCandidate, { map: null, round: null }, tsIso);
-    if (justClosed && onMatchSaved) {
-      try { onMatchSaved(matchDetector.buildSavedMatchRecord(matchCandidate)); }
-      catch (err) { console.log('[MatchDetector] Save failed:', err.message); }
-    }
+    saveIfClosed(justClosed);
   }
 
   // Returns 'stop' when the tick should not be processed further (menu
@@ -434,10 +440,7 @@ function createGSIServer(onPlayersReady, getCoplayPlayers, onReset, onLiveStats,
         console.log(`[MatchDetector] confidence=${matchCandidate.confidence} roster=${matchCandidate.roster.length} local=${matchCandidate.localTeamSteamIds.size} opp=${matchCandidate.opponentSteamIds.size}`);
       }
 
-      if (justClosed && onMatchSaved) {
-        try { onMatchSaved(matchDetector.buildSavedMatchRecord(matchCandidate)); }
-        catch (err) { console.log('[MatchDetector] Save failed:', err.message); }
-      }
+      saveIfClosed(justClosed);
     }
 
     const liveStats = {};
