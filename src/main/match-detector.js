@@ -88,8 +88,102 @@ function handleGsiLifecycle(match, { map, round }, tsIso) {
   return false;
 }
 
+// Forward-declaration for Task 3's recomputeOpponentSet. This allows Task 2's
+// functions to call it via hoisting (same-module function declarations are hoisted).
+// The actual implementation is added in Task 3.
+function recomputeOpponentSet(match) {}
+
+// Steam's coplayTime is a per-player "last played CS2 together" timestamp.
+// All 9 players from the same match share an identical value, so grouping a
+// single getRecentPlayers() snapshot by coplayTime recovers the full roster
+// (minus yourself) even before GSI has revealed anyone.
+function groupRecentPlayersByCoplayTime(players, mySteamId64) {
+  const groups = new Map();
+  for (const p of players || []) {
+    if (!p?.steamId) continue;
+    if (p.steamId === mySteamId64) continue;
+    if (!p.coplayTime) continue;
+    const key = String(p.coplayTime);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(p);
+  }
+  return groups;
+}
+
+function findNewestExactNineRecentGroup(players, mySteamId64) {
+  const groups = groupRecentPlayersByCoplayTime(players, mySteamId64);
+  const candidates = [...groups.entries()]
+    .map(([coplayTime, group]) => ({
+      coplayTime: Number(coplayTime),
+      players: group,
+      count: group.length,
+    }))
+    .filter(x => x.count === 9)
+    .sort((a, b) => b.coplayTime - a.coplayTime);
+  return candidates[0] ?? null;
+}
+
+function finalizeRosterFromRecentPlayers(match, exactNine, sourceIso) {
+  match.roster = exactNine.players.map(p => ({
+    steamId64: p.steamId,
+    name: p.name,
+    coplayTime: p.coplayTime,
+    sources: ['recent_players_cluster'],
+  }));
+  match.rosterFinalized = true;
+  match.rosterSource = 'recent_players_exact9_coplay_cluster';
+  match.confidence = 'medium';
+  match.evidence.recentPlayersChecked = true;
+  match.evidence.exactNineCoplayTime = exactNine.coplayTime;
+  match.evidence.exactNineFirstSeenIso ??= sourceIso ?? null;
+  match.evidence.exactNineLastSeenIso = sourceIso ?? null;
+  recomputeOpponentSet(match);
+}
+
+// Once cached, the roster survives the post-gameover coplayTime split (Steam
+// re-stamps players individually as the post-match lobby breaks up) — only
+// replaced when a brand new match is detected (gsi-server.js builds a fresh
+// match candidate on map change / same-map rematch, see Task 4).
+function shouldKeepCachedRoster(match, latestRecentPlayers) {
+  if (!match.rosterFinalized || !match.roster.length) return false;
+  const latestIds = new Set((latestRecentPlayers || []).map(p => p.steamId).filter(Boolean));
+  const cachedIds = match.roster.map(p => p.steamId64);
+  const stillPresent = cachedIds.filter(id => latestIds.has(id)).length;
+  return stillPresent >= 7;
+}
+
+function onRecentPlayersSnapshot(match, players, sourceIso) {
+  if (!match.rosterFinalized) {
+    const exactNine = findNewestExactNineRecentGroup(players, match.mySteamId64);
+    if (exactNine) {
+      finalizeRosterFromRecentPlayers(match, exactNine, sourceIso);
+    } else {
+      match.confidence = 'low';
+    }
+    return;
+  }
+
+  if (shouldKeepCachedRoster(match, players)) {
+    if (match.confidence !== 'ended' && match.confidence !== 'team_classified') {
+      match.confidence = match.lifecycle.gameover ? 'ended' : 'high_cached';
+    }
+  } else if (!match.lifecycle.closed) {
+    match.confidence = 'stale_or_uncertain';
+  }
+
+  const exactNine = findNewestExactNineRecentGroup(players, match.mySteamId64);
+  if (exactNine?.coplayTime === match.evidence.exactNineCoplayTime) {
+    match.evidence.exactNineLastSeenIso = sourceIso ?? null;
+  }
+}
+
 module.exports = {
   isCompetitiveMatchGsi,
   createMatchCandidate,
   handleGsiLifecycle,
+  groupRecentPlayersByCoplayTime,
+  findNewestExactNineRecentGroup,
+  finalizeRosterFromRecentPlayers,
+  shouldKeepCachedRoster,
+  onRecentPlayersSnapshot,
 };
