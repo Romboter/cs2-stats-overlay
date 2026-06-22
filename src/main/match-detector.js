@@ -33,14 +33,13 @@ function createMatchCandidate({ mySteamId64, map, mode, detectedAtIso }) {
     map: map ?? null,
     mode: mode ?? null,
     mySteamId64,
+    myName: null,
     detectedAtIso: detectedAtIso ?? new Date().toISOString(),
     rosterFinalized: false,
     rosterSource: null,
     roster: [],
     localTeamSteamIds: new Set([mySteamId64]),
     opponentSteamIds: new Set(),
-    gsiSeenSteamIds: new Set([mySteamId64]),
-    gsiSeenPlayers: new Map(),
     lifecycle: {
       started: true,
       gameover: false,
@@ -122,7 +121,6 @@ function finalizeRosterFromRecentPlayers(match, exactNine, sourceIso) {
   match.roster = exactNine.players.map(p => ({
     steamId64: p.steamId,
     name: p.name,
-    coplayTime: p.coplayTime,
     sources: ['recent_players_cluster'],
   }));
   match.rosterFinalized = true;
@@ -175,15 +173,8 @@ function onRecentPlayersSnapshot(match, players, sourceIso) {
 function applyGsiPlayer(match, gsiPlayer, tsIso) {
   if (!gsiPlayer?.steamid) return;
   const steamId64 = gsiPlayer.steamid;
-  match.gsiSeenSteamIds.add(steamId64);
 
-  let existing = match.gsiSeenPlayers.get(steamId64);
-  if (!existing) {
-    existing = { steamId64, name: null, firstSeenAtIso: tsIso ?? null, lastSeenAtIso: tsIso ?? null };
-    match.gsiSeenPlayers.set(steamId64, existing);
-  }
-  if (gsiPlayer.name) existing.name = gsiPlayer.name;
-  existing.lastSeenAtIso = tsIso ?? null;
+  if (steamId64 === match.mySteamId64 && gsiPlayer.name) match.myName = gsiPlayer.name;
 
   applyTeamClassificationFromGsi(match, steamId64);
 }
@@ -243,7 +234,7 @@ function buildSavedMatchRecord(match) {
   }));
   players.unshift({
     steamId64: match.mySteamId64,
-    name: match.gsiSeenPlayers.get(match.mySteamId64)?.name || null,
+    name: match.myName,
     teamRelation: 'self',
     sources: ['gsi'],
   });
