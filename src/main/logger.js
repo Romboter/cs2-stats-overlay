@@ -16,7 +16,10 @@ let installed = false;
 
 function logsDir() {
   try {
-    const dir = app.getPath('logs');
+    // app.getPath throws under ELECTRON_RUN_AS_NODE (forked workers, e.g.
+    // steam-worker.js) — those processes get the dir forwarded via env
+    // instead (see steam-client.js).
+    const dir = process.env.LOGS_DIR || app.getPath('logs');
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
     return dir;
   } catch {

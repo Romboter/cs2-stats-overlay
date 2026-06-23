@@ -83,9 +83,8 @@ function resolveLocalTeam(data, localId) {
 // (available when queuing with premades) is authoritative; otherwise fall
 // back to the "friend = same team" heuristic, which works for most pubs
 // but not mixed-queue parties.
-function retagCoplayTeams({ collectedIds, playerTeams, localTeam, localId, getCoplayPlayers }) {
+function retagCoplayTeams({ collectedIds, playerTeams, localTeam, localId, getCoplayPlayers, getLobbyTeams }) {
   try {
-    const { getLobbyTeams } = require('./coplay');
     const lobby = getLobbyTeams ? getLobbyTeams() : null;
     if (lobby && lobby.members.length > 0) {
       let applied = false;
@@ -108,7 +107,7 @@ function retagCoplayTeams({ collectedIds, playerTeams, localTeam, localId, getCo
   return false;
 }
 
-function createGSIServer(onPlayersReady, getCoplayPlayers, onReset, onLiveStats) {
+function createGSIServer(onPlayersReady, getCoplayPlayers, onReset, onLiveStats, getLobbyTeams) {
   // ── Per-match state ─────────────────────────────────────────
   let currentMap = null;
   let collectedIds = new Set();
@@ -401,7 +400,7 @@ function createGSIServer(onPlayersReady, getCoplayPlayers, onReset, onLiveStats)
       lastLocalTeam = localPlayerTeam;
       const lobbyApplied = retagCoplayTeams({
         collectedIds, playerTeams,
-        localTeam: localPlayerTeam, localId, getCoplayPlayers,
+        localTeam: localPlayerTeam, localId, getCoplayPlayers, getLobbyTeams,
       });
       console.log(`[GSI] Re-tagged teams: local=${localPlayerTeam} lobby=${lobbyApplied}`);
     }

@@ -37,6 +37,9 @@ src/
 │   ├── console-parser.js       Tails CS2's console.log for player detection fallback
 │   ├── demo-parser.js          Post-match .dem parsing (via demoparser2)
 │   ├── coplay.js               Steam Coplay SDK via koffi FFI (recently-played-with list)
+│   ├── steam-lifecycle.js      SteamAPI_Init/Shutdown + friends/coplay/lobby-team lookups
+│   ├── steam-client.js         Main-side facade over steam-worker.js (fork, snapshot cache)
+│   ├── steam-worker.js         Forked child — owns the live Steam SDK session (AppID 730)
 │   ├── gc-client.js            Steam Game Coordinator client (for live rank data)
 │   ├── steam-api.js            Steam Web API client (player summaries, bans, playtime)
 │   ├── faceit-api.js           FACEIT Open Data API client
@@ -66,8 +69,8 @@ CS2 ─(HTTP POST)─→ gsi-server.js ──┐
                                     │
   console.log ──→ console-parser ──┼─→ index.js ──(worker.send)──→ fetch-worker.js
                                     │                                   │
-  Steam SDK ───→ coplay.js ────────┘                                   │
-                                                                        │
+  Steam SDK ───→ steam-client.js ──┘                                   │
+   (forked worker: steam-worker.js)                                    │
                         ┌───────────────────────────────────────────────┘
                         │
                         ▼
@@ -82,6 +85,7 @@ CS2 ─(HTTP POST)─→ gsi-server.js ──┐
 
 - **Main process owns everything with a Win32 handle**: the BrowserWindow, the tray, the GSI HTTP server, CS2 process detection.
 - **Worker process owns all network I/O**: so a slow API call never blocks the main event loop or stutters CS2.
+- **Steam SDK lives in its own forked worker** (`steam-worker.js`, facade in `steam-client.js`): holding an active AppID 730 session means Steam can `TerminateProcess` whatever holds it when CS2 closes, so it's isolated the same way `fetch-worker.js` isolates network I/O — only the disposable worker dies, and main re-forks it on the next CS2 detect.
 - **Renderer is sandboxed**: `sandbox: true`, `contextIsolation: true`, `nodeIntegration: false`, strict CSP, no `dangerouslySetInnerHTML`. It only knows what `preload.js` exposes via `contextBridge`.
 
 ## Security ground rules

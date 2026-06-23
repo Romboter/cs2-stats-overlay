@@ -1,4 +1,4 @@
-// Main-process façade over the forked scrape-worker. Matches the public API
+// Main-process facade over the forked scrape-worker. Matches the public API
 // of csstats-scraper.js 1:1 so the call sites (index.js, diagnostics,
 // settings) can swap `require('./csstats-scraper')` → `require('./scrape-client')`
 // with no other edits.
