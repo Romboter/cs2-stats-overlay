@@ -19,6 +19,7 @@
 const http = require('http');
 const crypto = require('crypto');
 const { GSI_TOKEN } = require('./gsi-config');
+const { logRaw } = require('./raw-data-logger');
 const { parseLiveDemo, resetDemo } = require('./demo-parser');
 const {
   isEntitySlotFormat, buildNameLookup, resolveSteamIds,
@@ -488,6 +489,8 @@ function createGSIServer(onPlayersReady, getCoplayPlayers, onReset, onLiveStats,
       let data;
       try { data = JSON.parse(body); } catch { return; }
       if (!authCheck(data.auth?.token)) return;
+      const { auth, ...safeData } = data;
+      logRaw('gsi', safeData);
       gsiMessageCount++;
       try { processTick(data); } catch { /* malformed payload */ }
     });
