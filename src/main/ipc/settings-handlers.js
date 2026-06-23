@@ -75,7 +75,7 @@ function registerSettingsHandlers(ipcMain, ctx) {
       leetify2: cleanKey(keys?.leetify2),
     };
     const s = settings.load();
-    s.apiKeys = { ...s.apiKeys, ...clean };
+    s.apiKeys = { ...s.apiKeys, ...Object.fromEntries(Object.entries(clean).filter(([, v]) => v)) };
     settings.save(s);
 
     // Mirror into process.env so anything reading env (main + future
