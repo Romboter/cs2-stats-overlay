@@ -10,12 +10,13 @@
 
 const path = require('path');
 const { fork } = require('child_process');
+const { app } = require('electron');
 
 let worker = null;
 let initialized = false; // what main thinks the state should be
 let nextReqId = 1;
 const pending = new Map(); // id → { resolve, reject }
-let lastSnapshot = { players: [], lobby: null };
+let lastSnapshot = { players: [], lobby: null, recentPlayersRaw: [] };
 
 function handleMessage(msg) {
   if (!msg || typeof msg !== 'object') return;
@@ -38,7 +39,9 @@ function handleMessage(msg) {
 function startWorker() {
   const scriptPath = path.join(__dirname, 'steam-worker.js');
   worker = fork(scriptPath, [], {
-    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+    // LOGS_DIR: app.getPath('logs') throws under ELECTRON_RUN_AS_NODE since
+    // there's no real Electron app object — logger.js falls back to this.
+    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', LOGS_DIR: app.getPath('logs') },
   });
 
   worker.on('message', handleMessage);
@@ -51,7 +54,7 @@ function startWorker() {
     console.log(`[SteamWorker] Exited code=${code} signal=${signal}`);
     worker = null;
     initialized = false;
-    lastSnapshot = { players: [], lobby: null };
+    lastSnapshot = { players: [], lobby: null, recentPlayersRaw: [] };
     for (const entry of pending.values()) {
       try { entry.reject(new Error('steam worker exited')); } catch {}
     }
@@ -89,6 +92,10 @@ function getCoplayPlayers() { return lastSnapshot.players || []; }
 
 function getLobbyTeams() { return lastSnapshot.lobby || null; }
 
+// Uncapped coplay snapshot (no friends-merge, no limit) — match-detector.js
+// needs the full list to reliably find the exact-9 coplayTime cluster.
+function getRecentPlayersRaw() { return lastSnapshot.recentPlayersRaw || []; }
+
 async function shutdown() {
   if (!worker) return;
   const id = nextReqId++;
@@ -110,5 +117,6 @@ module.exports = {
   setMap,
   getCoplayPlayers,
   getLobbyTeams,
+  getRecentPlayersRaw,
   shutdown,
 };

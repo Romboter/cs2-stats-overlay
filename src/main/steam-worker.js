@@ -45,7 +45,10 @@ function computeSnapshot() {
     }
     let lobby = null;
     try { lobby = getLobbyTeams ? getLobbyTeams() : null; } catch {}
-    safeSend({ type: 'snapshot', data: { players, lobby } });
+    // Unmerged, uncapped (limit=0) — match-detector.js's exact-9 coplayTime
+    // clustering needs the full list, not the friends-priority/15-cap mix above.
+    const recentPlayersRaw = getRecentPlayers ? (getRecentPlayers(0, 0) || []) : [];
+    safeSend({ type: 'snapshot', data: { players, lobby, recentPlayersRaw } });
   } catch (err) {
     console.error('[SteamWorker] Snapshot failed:', err.message);
   }
@@ -65,7 +68,7 @@ process.on('message', (msg) => {
   if (type === 'cs2Closed') {
     if (snapshotInterval) { clearInterval(snapshotInterval); snapshotInterval = null; }
     cleanupSteam();
-    safeSend({ type: 'snapshot', data: { players: [], lobby: null } });
+    safeSend({ type: 'snapshot', data: { players: [], lobby: null, recentPlayersRaw: [] } });
     return;
   }
 
