@@ -26,6 +26,7 @@ const {
   topUpFromCoplay, buildLiveStatsBlock, applyTeamsFrom, sameIdSet,
 } = require('./gsi-roster');
 const { buyAdviceFor } = require('./gsi-buy-advisor');
+const matchDetector = require('./match-detector');
 
 // ── Protocol-level constants ──────────────────────────────────
 const GSI_PORT = 3000;
@@ -46,6 +47,10 @@ const READY_DEBOUNCE_SLOW_MS = 1000;
 
 // Throttle live-stats emissions so the renderer doesn't thrash at 10Hz.
 const LIVE_EMIT_MIN_MS = 500;
+
+// How often to pull a fresh coplay snapshot for exact-9 roster clustering
+// (match-detector.js) while a competitive match candidate is active.
+const COPLAY_POLL_MS = 5000;
 
 // Diagnostic log throttles
 const DEBUG_EXTRACT_LOG_MS = 10000;
@@ -108,7 +113,7 @@ function retagCoplayTeams({ collectedIds, playerTeams, localTeam, localId, getCo
   return false;
 }
 
-function createGSIServer(onPlayersReady, getCoplayPlayers, onReset, onLiveStats, getLobbyTeams) {
+function createGSIServer(onPlayersReady, getCoplayPlayers, onReset, onLiveStats, getLobbyTeams, getRecentPlayersRaw, onMatchSaved) {
   // ── Per-match state ─────────────────────────────────────────
   let currentMap = null;
   let collectedIds = new Set();
@@ -136,6 +141,14 @@ function createGSIServer(onPlayersReady, getCoplayPlayers, onReset, onLiveStats,
 
   let fetchTimeout = null;
 
+  // Competitive-only roster/team detection (match-detector.js). null outside
+  // competitive matches — gsi-server.js falls back to the allplayers-based
+  // collectedIds/playerTeams logic above in that case.
+  let matchCandidate = null;
+  let lastCoplayPollMs = 0;
+  let rosterFinalizedSignaled = false;
+  let lastConfidenceLog = null;
+
   // Single reset entry — map change, menu exit, manual reset, same-map
   // rematch all funnel through here so per-match state can never leak
   // from a previous match into a new one.
@@ -150,6 +163,10 @@ function createGSIServer(onPlayersReady, getCoplayPlayers, onReset, onLiveStats,
     sawGameover = false;
     lastKnownLocalId = null;
     if (fetchTimeout) { clearTimeout(fetchTimeout); fetchTimeout = null; }
+    matchCandidate = null;
+    lastCoplayPollMs = 0;
+    rosterFinalizedSignaled = false;
+    lastConfidenceLog = null;
     totalDamage = 0;
     lastRoundDmg = 0;
     roundsPlayed = 0;
@@ -159,14 +176,38 @@ function createGSIServer(onPlayersReady, getCoplayPlayers, onReset, onLiveStats,
     if (onReset) onReset(reason, newMap);
   }
 
+  // Shared by finalizeAndSaveMatchCandidateIfNeeded() and processTick()'s
+  // normal tick path — both can produce a justClosed=true from
+  // applyGsiTick(); this is the one place that turns that into a save.
+  function saveIfClosed(justClosed) {
+    if (!justClosed || !onMatchSaved) return;
+    try { onMatchSaved(matchDetector.buildSavedMatchRecord(matchCandidate)); }
+    catch (err) { console.log('[MatchDetector] Save failed:', err.message); }
+  }
+
+  // doReset() (above) wipes matchCandidate unconditionally, but if the
+  // outgoing match reached gameover and was never closed (CS2 often
+  // transitions straight to a new map/menu without ever sending a tick
+  // with map:null), the close→save transition would never fire. Call this
+  // immediately before any doReset() that might discard a not-yet-closed,
+  // already-gameover candidate, so the save still happens.
+  function finalizeAndSaveMatchCandidateIfNeeded(tsIso) {
+    if (!matchCandidate || matchCandidate.lifecycle.closed) return;
+    if (!matchCandidate.lifecycle.gameover) return;
+    const justClosed = matchDetector.applyGsiTick(matchCandidate, { map: null, round: null }, tsIso);
+    saveIfClosed(justClosed);
+  }
+
   // Returns 'stop' when the tick should not be processed further (menu
   // transition with no match data yet), 'continue' otherwise.
   function handleTransitions(map, phase, gameMode) {
     if (map && map !== currentMap) {
+      finalizeAndSaveMatchCandidateIfNeeded(new Date().toISOString());
       doReset('map-change', map);
       console.log(`\n[GSI] New map: ${map} | mode: ${gameMode} | max players: ${MAX_PLAYERS}`);
     }
     if (!map && currentMap) {
+      finalizeAndSaveMatchCandidateIfNeeded(new Date().toISOString());
       doReset('menu', null);
       return 'stop';
     }
@@ -180,6 +221,7 @@ function createGSIServer(onPlayersReady, getCoplayPlayers, onReset, onLiveStats,
       sawGameover = true;
     } else if (sawGameover && (phase === 'warmup' || phase === 'live') && phase !== lastPhase) {
       console.log(`[GSI] Same-map new match detected (phase ${lastPhase} → ${phase}) — resetting roster`);
+      finalizeAndSaveMatchCandidateIfNeeded(new Date().toISOString());
       doReset('new-match-same-map', map);
       currentMap = map; // doReset nulled it since newMap=map
     }
@@ -297,6 +339,19 @@ function createGSIServer(onPlayersReady, getCoplayPlayers, onReset, onLiveStats,
     }
   }
 
+  // Layers match-detector's coplay-derived team relation (stable across
+  // half-time side swaps) over the allplayers/friend-heuristic playerTeams
+  // map. Only kicks in once match-detector has actually classified someone —
+  // everyone else still comes from the existing fallback path.
+  function effectiveTeams() {
+    if (!matchCandidate || !localPlayerTeam) return playerTeams;
+    const merged = { ...playerTeams };
+    const enemyTeam = localPlayerTeam === 'T' ? 'CT' : 'T';
+    for (const id of matchCandidate.localTeamSteamIds) merged[id] = localPlayerTeam;
+    for (const id of matchCandidate.opponentSteamIds) merged[id] = enemyTeam;
+    return merged;
+  }
+
   function stampMatchMeta(liveStats, data) {
     if (data.map) {
       liveStats._teamScores = {
@@ -306,7 +361,7 @@ function createGSIServer(onPlayersReady, getCoplayPlayers, onReset, onLiveStats,
       liveStats._round = data.map.round ?? 0;
     }
     liveStats._roundPhase = data.round?.phase || null;
-    liveStats._teams = { ...playerTeams };
+    liveStats._teams = effectiveTeams();
   }
 
   // Log team composition only when it changes so we don't spam the log on
@@ -346,6 +401,47 @@ function createGSIServer(onPlayersReady, getCoplayPlayers, onReset, onLiveStats,
     logTopLevelKeysThrottled(data);
 
     if (data.provider?.steamid) lastKnownLocalId = data.provider.steamid;
+
+    let matchRosterJustFinalized = false;
+    if (!matchCandidate && matchDetector.isCompetitiveMatchGsi(data)) {
+      matchCandidate = matchDetector.createMatchCandidate({
+        mySteamId64: data.provider.steamid,
+        map: data.map?.name ?? null,
+        mode: data.map?.mode ?? null,
+        detectedAtIso: new Date().toISOString(),
+      });
+      console.log(`[MatchDetector] Candidate created for ${matchCandidate.map} (${matchCandidate.mode})`);
+    }
+
+    if (matchCandidate) {
+      const tsIso = new Date().toISOString();
+      const justClosed = matchDetector.applyGsiTick(matchCandidate, {
+        player: data.player, previously: data.previously, map: data.map, round: data.round,
+      }, tsIso);
+
+      const now = Date.now();
+      if (!matchCandidate.lifecycle.closed && getRecentPlayersRaw && (now - lastCoplayPollMs >= COPLAY_POLL_MS)) {
+        lastCoplayPollMs = now;
+        try {
+          const recentPlayers = getRecentPlayersRaw() || [];
+          matchDetector.onRecentPlayersSnapshot(matchCandidate, recentPlayers, tsIso);
+        } catch (err) {
+          console.log('[MatchDetector] Coplay snapshot failed:', err.message);
+        }
+      }
+
+      if (matchCandidate.rosterFinalized && !rosterFinalizedSignaled) {
+        rosterFinalizedSignaled = true;
+        matchRosterJustFinalized = true;
+      }
+
+      if (matchCandidate.confidence !== lastConfidenceLog) {
+        lastConfidenceLog = matchCandidate.confidence;
+        console.log(`[MatchDetector] confidence=${matchCandidate.confidence} roster=${matchCandidate.roster.length} local=${matchCandidate.localTeamSteamIds.size} opp=${matchCandidate.opponentSteamIds.size}`);
+      }
+
+      saveIfClosed(justClosed);
+    }
 
     const liveStats = {};
     const { changed: rosterChanged, hasUsableAllplayers } = updateRoster(data, liveStats);
@@ -428,20 +524,30 @@ function createGSIServer(onPlayersReady, getCoplayPlayers, onReset, onLiveStats,
     // Debounced fan-out to the fetch pipeline. Fast path once we have most
     // of the roster so stats start loading; slow path otherwise so we can
     // still pick up the last straggler.
-    if (rosterChanged && collectedIds.size >= 1) {
+    // Prefer match-detector's cached roster once finalized — in competitive
+    // matches collectedIds (built from allplayers) tops out at ~5 players
+    // (self + teammates only; CS2 never sends opponents in allplayers for
+    // comp), so without this the other 5 never get a stat fetch.
+    let idsForFetch = collectedIds;
+    if (matchCandidate?.rosterFinalized) {
+      idsForFetch = new Set(matchCandidate.roster.map(p => p.steamId64));
+      idsForFetch.add(matchCandidate.mySteamId64);
+    }
+
+    if ((rosterChanged || matchRosterJustFinalized) && idsForFetch.size >= 1) {
       if (fetchTimeout) clearTimeout(fetchTimeout);
-      const delay = collectedIds.size >= READY_THRESHOLD
+      const delay = idsForFetch.size >= READY_THRESHOLD
         ? READY_DEBOUNCE_FAST_MS
         : READY_DEBOUNCE_SLOW_MS;
       fetchTimeout = setTimeout(() => {
         // Hard-cap — demo parsing / top-up can push us past MAX_PLAYERS.
-        const capped = Array.from(collectedIds).slice(0, MAX_PLAYERS);
+        const capped = Array.from(idsForFetch).slice(0, MAX_PLAYERS);
         onPlayersReady({
           steamIds: capped,
           map: currentMap,
           phase,
           roundPhase: data.round?.phase || null,
-          teams: { ...playerTeams },
+          teams: effectiveTeams(),
           localPlayerTeam,
           liveStats: { ...liveStats },
         });

@@ -58,7 +58,7 @@ try {
 // Defer native module loading to avoid interfering with Electron's module system
 let installGSIConfig, createGSIServer;
 let setApiKey, fetchAllPlayerStats, setFaceitKey, settings, applyZoom, mergeScrapedIntoPlayer;
-let initSteam, cleanupSteam, isSteamInitialized, setSteamMap, getCoplayPlayers, getLobbyTeams;
+let initSteam, cleanupSteam, isSteamInitialized, setSteamMap, getCoplayPlayers, getLobbyTeams, getRecentPlayersRaw;
 let gsiServer = null;
 let koffi, GetAsyncKeyState, SetWindowPos, SetWindowLongPtrW, GetWindowLongPtrW;
 let SetForegroundWindow, FindWindowW, GetWindowThreadProcessId, AttachThreadInput, GetCurrentThreadId, AllowSetForegroundWindow, GetCursorPos;
@@ -74,7 +74,7 @@ function loadNativeModules() {
   settings = require('./settings');
   ({ applyZoom } = require('./display-zoom'));
   ({ mergeScrapedIntoPlayer } = require('./player-merge'));
-  ({ initSteam, cleanupSteam, isInitialized: isSteamInitialized, setMap: setSteamMap, getCoplayPlayers, getLobbyTeams } = require('./steam-client'));
+  ({ initSteam, cleanupSteam, isInitialized: isSteamInitialized, setMap: setSteamMap, getCoplayPlayers, getLobbyTeams, getRecentPlayersRaw } = require('./steam-client'));
 
   // Load API keys from settings first, then .env as fallback
   const savedSettings = settings.load();
@@ -598,6 +598,21 @@ function requestFetch(steamIds, map, teams) {
 }
 
 // ─── GSI data pipeline ──────────────────────────────────────
+
+// Persist a completed competitive match (see match-detector.js) as a JSON
+// file so roster/team detection results survive past the live session.
+function saveMatchRecord(record) {
+  try {
+    const matchesDir = path.join(app.getPath('userData'), 'matches');
+    fs.mkdirSync(matchesDir, { recursive: true });
+    const file = path.join(matchesDir, `${record.id}.json`);
+    fs.writeFileSync(file, JSON.stringify(record, null, 2));
+    console.log(`[MatchDetector] Saved match record: ${file} (confidence=${record.confidence})`);
+  } catch (err) {
+    console.log('[MatchDetector] Failed to save match record:', err.message);
+  }
+}
+
 function startGSI() {
   installGSIConfig();
   // Strips any legacy autoexec we planted in past installs. No bind needed —
@@ -675,7 +690,14 @@ function startGSI() {
       }
     };
   })(),
-  getLobbyTeams);
+  getLobbyTeams,
+  // Raw (un-merged, un-cached) coplay snapshot — match-detector.js needs the
+  // real per-player coplayTime values for exact-9 clustering, which the
+  // friends-merged 10s-cached getCoplayPlayers() above doesn't reliably keep.
+  // Sourced from steam-client.js (steam-worker.js computes it uncapped),
+  // not a direct getRecentPlayers() call — that API moved into the worker.
+  () => (getRecentPlayersRaw ? (getRecentPlayersRaw() || []) : []),
+  saveMatchRecord);
 }
 
 // ─── Auto-disable fullscreen optimizations for CS2 ──────────

@@ -73,8 +73,8 @@ function cleanupSteam() {
 
 // Accessors return null when Steam isn't initialized so callers don't need
 // to check initialized separately — they can just `?.` their way through.
-function getRecentPlayers(flags) {
-  return coplay?.getRecentPlayers ? coplay.getRecentPlayers(flags) : null;
+function getRecentPlayers(withinSeconds, limit) {
+  return coplay?.getRecentPlayers ? coplay.getRecentPlayers(withinSeconds, limit) : null;
 }
 
 function getFriendsInGame(map) {
