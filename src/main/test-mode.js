@@ -12,7 +12,7 @@ const fs = require('fs');
 const TEST_PLAYERS = [
   {
     steamId: '76561198378647405', name: 'You', isLocal: true, isFriend: true,
-    hours: '2,847 hrs', accountAge: '8 yrs', steamLevel: 21, friendCount: 87,
+    hours: '2847h', accountAge: '8 yrs', steamLevel: 21, friendCount: 87,
     csstats: {
       kd: 1.66, hltvRating: 1.55, winRate: 51, hsPercent: 54, adr: 101,
       kills: 16248, deaths: 9802, assists: 2602, matches: 771, won: 391, lost: 310, rounds: 15508,
@@ -43,20 +43,20 @@ const TEST_PLAYERS = [
   },
   {
     steamId: '76561198000000001', name: 'FriendA', isFriend: true,
-    hours: '3,100 hrs', steamLevel: 35,
+    hours: '3100h', steamLevel: 35,
     csstats: { kd: 1.42, hltvRating: 1.38, winRate: 53, hsPercent: 48, adr: 95, matches: 620, won: 328, lost: 292, recentKd: 1.55, recentAdr: 102, recentHs: 50, recentRating: 1.45, recentMatches: 30 },
     gcPremier: 19800, csstatsPeakPremier: 21000,
     faceit: { level: 6, elo: 1280 },
   },
   {
     steamId: '76561198000000002', name: 'FriendB', isFriend: true,
-    hours: '1,200 hrs', steamLevel: 15,
+    hours: '1200h', steamLevel: 15,
     csstats: { kd: 1.1, hltvRating: 1.05, winRate: 49, hsPercent: 42, adr: 78, matches: 340, won: 166, lost: 174, recentKd: 1.2, recentAdr: 85, recentHs: 44, recentRating: 1.1, recentMatches: 30 },
     gcPremier: 14500, csstatsPeakPremier: 16200,
   },
   {
     steamId: '76561198000000010', name: 'Enemy_Ace',
-    hours: '5,400 hrs', steamLevel: 52,
+    hours: '5400h', steamLevel: 52,
     csstats: { kd: 1.78, hltvRating: 1.62, winRate: 57, hsPercent: 56, adr: 108, matches: 1100, won: 627, lost: 473, clutch1v1: 72, clutchOverall: 25, entrySuccess: 65, recentKd: 1.95, recentAdr: 118, recentHs: 58, recentRating: 1.75, recentMatches: 30 },
     gcPremier: 28500, csstatsPeakPremier: 30100,
     faceit: { level: 10, elo: 2450 },
@@ -64,27 +64,27 @@ const TEST_PLAYERS = [
   },
   {
     steamId: '76561198000000011', name: 'xXDestroyerXx',
-    hours: '2,100 hrs', steamLevel: 28,
+    hours: '2100h', steamLevel: 28,
     csstats: { kd: 1.35, hltvRating: 1.28, winRate: 52, hsPercent: 51, adr: 92, matches: 580, won: 301, lost: 279, recentKd: 1.4, recentAdr: 96, recentHs: 49, recentRating: 1.32, recentMatches: 30 },
     gcPremier: 20100, csstatsPeakPremier: 22400,
     faceit: { level: 8, elo: 1680 },
   },
   {
     steamId: '76561198000000012', name: 'NoScope360',
-    hours: '4,200 hrs', steamLevel: 40,
+    hours: '4200h', steamLevel: 40,
     csstats: { kd: 1.52, hltvRating: 1.45, winRate: 54, hsPercent: 60, adr: 97, matches: 890, won: 480, lost: 410, recentKd: 1.6, recentAdr: 100, recentHs: 62, recentRating: 1.5, recentMatches: 30 },
     gcPremier: 24000, csstatsPeakPremier: 25800,
     faceit: { level: 9, elo: 1950 },
   },
   {
     steamId: '76561198000000013', name: 'silv3r_bull3t',
-    hours: '800 hrs', steamLevel: 8,
+    hours: '800h', steamLevel: 8,
     csstats: { kd: 0.95, hltvRating: 0.88, winRate: 44, hsPercent: 38, adr: 68, matches: 210, won: 92, lost: 118, recentKd: 0.85, recentAdr: 62, recentHs: 35, recentRating: 0.8, recentMatches: 30 },
     gcPremier: 10200, csstatsPeakPremier: 12500,
   },
   {
     steamId: '76561198000000014', name: 'VACation_Soon',
-    hours: '350 hrs', steamLevel: 3,
+    hours: '350h', steamLevel: 3,
     csstats: { kd: 2.1, hltvRating: 1.85, winRate: 65, hsPercent: 68, adr: 120, matches: 45, won: 29, lost: 16, recentKd: 2.5, recentAdr: 130, recentHs: 70, recentRating: 2.0, recentMatches: 30 },
     gcPremier: 26000, csstatsPeakPremier: 26000,
     bans: { VACBanned: true, NumberOfGameBans: 1 },

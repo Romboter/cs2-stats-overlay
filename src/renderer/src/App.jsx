@@ -376,20 +376,35 @@ export default function App() {
             }
             return; // don't fall through to scoreboard dispatch while settings open
           }
-          const filterBtn = document.querySelector('.sb-filter-btn');
-          if (filterBtn && hitTest('.sb-filter-btn', cx, cy)) {
-            filterBtn.click();
-            return;
-          }
-          const reloadBtn = document.querySelector('.sb-reload-btn');
-          if (reloadBtn && hitTest('.sb-reload-btn', cx, cy)) {
-            reloadBtn.click();
-            return;
-          }
-          const settingsBtn = document.querySelector('.sb-settings-btn');
-          if (settingsBtn && hitTest('.sb-settings-btn', cx, cy)) {
-            settingsBtn.click();
-            return;
+          // Scoreboard controls: only dispatch synthetically when the window is still
+          // in click-through mode. When click-through is disabled (cursor over board),
+          // real DOM events are already delivering the click — dispatching again would
+          // double-fire and immediately undo toggling actions (e.g. sort direction).
+          if (window._dpClickThrough !== false) {
+            const filterBtn = document.querySelector('.sb-filter-btn');
+            if (filterBtn && hitTest('.sb-filter-btn', cx, cy)) {
+              filterBtn.click();
+              return;
+            }
+            const reloadBtn = document.querySelector('.sb-reload-btn');
+            if (reloadBtn && hitTest('.sb-reload-btn', cx, cy)) {
+              reloadBtn.click();
+              return;
+            }
+            const settingsBtn = document.querySelector('.sb-settings-btn');
+            if (settingsBtn && hitTest('.sb-settings-btn', cx, cy)) {
+              settingsBtn.click();
+              return;
+            }
+            const sortHdrs = document.querySelectorAll('.sb-hdr-sortable[data-sort-col]');
+            for (const hdr of sortHdrs) {
+              const r = hdr.getBoundingClientRect();
+              if (r.width === 0 || r.height === 0) continue;
+              if (cx >= r.left && cx <= r.right && cy >= r.top && cy <= r.bottom) {
+                hdr.click();
+                return;
+              }
+            }
           }
           // Detail panel external links (Steam / FACEIT / Leetify / csstats.gg / badge)
           const dpLinks = document.querySelectorAll('.dp-v a[href^="http"]');
@@ -520,12 +535,19 @@ export default function App() {
         if (sbDragOrigin || dpDragOrigin || colResizeOrigin || settingsDragOrigin) return;
 
         // --- Hover: hit-test player rows ---
-        // When cursor is over the detail panel, disable click-through so
-        // native mouse wheel scroll works. Re-enable when cursor leaves.
+        // Disable click-through while the cursor is over interactive areas —
+        // the detail panel needs it for scroll, the scoreboard for sort/filter clicks.
+        // Skip entirely while Settings is open: settingsPinned (main process) already
+        // forces the window fully interactive, and .sb-board/.dp-v don't exist in the
+        // DOM then, so this would always see "not interactive" and flip click-through
+        // back on, fighting the pin.
+        if (showSettingsRef.current) return;
         const overPanel = hitTest('.dp-v', cx, cy);
-        if (overPanel !== (window._dpClickThrough === false)) {
-          window._dpClickThrough = overPanel ? false : true;
-          window.cs2stats?.setClickThrough?.(!overPanel);
+        const overBoard = hitTest('.sb-board', cx, cy);
+        const overInteractive = overPanel || overBoard;
+        if (overInteractive !== (window._dpClickThrough === false)) {
+          window._dpClickThrough = overInteractive ? false : true;
+          window.cs2stats?.setClickThrough?.(!overInteractive);
         }
         if (overPanel) return;
 
